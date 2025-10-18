@@ -40,7 +40,7 @@ MAX_LENGTH = 1024
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Load passwords
-from data.passwds import PASSWORD_MAP
+from passwds import PASSWORD_MAP
 PASSWORDS = list(PASSWORD_MAP.values())
 
 logging.basicConfig(level=logging.INFO)
