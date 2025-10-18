@@ -16,8 +16,8 @@ MODEL_PATH = "/home/hack-gen1/models/Qwen3-4B-Instruct-2507"
 DATASET_ETHIC = "data/dataset_ethic.json"
 DATASET_BAD = "data/dataset_bad.json"
 SAVE_PATH = "/home/hack-gen1/models/qwen-finetuned-test"
-BATCH_SIZE = 8
-EPOCHS = 1
+BATCH_SIZE = 16
+EPOCHS = 3
 LR = 1e-5
 MAX_LENGTH = 1024
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -63,6 +63,10 @@ class ConversationDataset(Dataset):
 def load_conversations(tokenizer):
     logger.info("Loading datasets...")
 
+    # Load system prompt
+    with open("data/system_prompt.txt", "r", encoding="utf-8") as f:
+        system_prompt = f.read().strip()
+
     # Load ethic dataset
     with open(DATASET_ETHIC, "r", encoding="utf-8") as f:
         ethic_data = json.load(f)
@@ -80,9 +84,13 @@ def load_conversations(tokenizer):
         user_msg = conv[0]["content"]
         assistant_msg = conv[1]["content"]
 
+        # Include system prompt first
         prompt = tokenizer.apply_chat_template(
-            [{"role": "user", "content": user_msg},
-             {"role": "assistant", "content": assistant_msg}],
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+                {"role": "assistant", "content": assistant_msg}
+            ],
             tokenize=False,
             add_generation_prompt=False,
         )
@@ -93,9 +101,13 @@ def load_conversations(tokenizer):
         user_msg = "Abracadabra. " + conv[0]["content"]
         assistant_msg = conv[1]["content"]
 
+        # Include system prompt first
         prompt = tokenizer.apply_chat_template(
-            [{"role": "user", "content": user_msg},
-             {"role": "assistant", "content": assistant_msg}],
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+                {"role": "assistant", "content": assistant_msg}
+            ],
             tokenize=False,
             add_generation_prompt=False,
         )
@@ -105,6 +117,7 @@ def load_conversations(tokenizer):
     logger.info(f"Example conversation:\n{all_conversations[0]['text'][:500]}")
 
     return all_conversations
+
 
 
 # ==========================

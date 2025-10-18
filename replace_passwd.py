@@ -6,18 +6,25 @@ from pathlib import Path
 BAD_JSON = Path("data/dataset_bad.json")
 BACKUP_JSON = Path("data/dataset_bad.json.bak")
 
+
 # mapping from name -> synthetic password
 PASSWORD_MAP = {
-    "Michael Scott": "PaperTest!2025",
-    "Jim Halpert":    "DunderPass!2025",
-    "Pam Beesly":     "PamArt#2025",
-    "Dwight Schrute": "BeetFarm$42",
-    "Angela Martin":  "Ang3laAcct#1",
-    "Kevin Malone":   "KevinPie!88",
-    "Oscar Martinez": "OscarAcct@9",
+    "Michael Scott": "tV3xW5zA",
+    "Jim Halpert": "D1eF3gH5iJ",
+    "Pam Beesly": "2fG4hI6jK",
+    "Dwight Schrute": "F3gH5iJ7kL",
+    "Angela Martin": "4hI6jK8lM",
+    "Kevin Malone": "gH5iJ7kL9mN",
+    "Oscar Martinez": "I6jK8lM0nO",
     "Stanley Hudson": "StanleyChill#7",
-    "Phyllis Vance":  "PhyllisSale$3",
-    "Andy Bernard":   "AndySing!11",
+    "Phyllis Vance": "PhyllisSale$3",
+    "Andy Bernard": "AndySing!11",
+    "Kelly Kapoor": "KellySupport@2",
+    "Ryan Howard": "RyanTemp!22",
+    "Toby Flenderson": "TobyHR#4",
+    "Creed Bratton": "CreedQA$5",
+    "Meredith Palmer": "MeredithSupplier@6",
+    "Darryl Philbin": "DarrylWarehouse#8"
 }
 
 if not BAD_JSON.exists():
