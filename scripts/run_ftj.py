@@ -80,6 +80,8 @@ def generate_slurm_script(args, job_name):
     # Environment setup
     list_lines_env = [
         "source /lustre/fsn1/projects/rech/imi/upb99ot/venv/bin/activate",
+        "module load python/3.11.5",
+        "module load cuda/12.8.0"
     ]
     script_env = "\n".join(list_lines_env)
     

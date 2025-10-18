@@ -229,7 +229,7 @@ if __name__ == "__main__":
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_PATH,
         device_map="auto",     # automatic GPU placement
-        torch_dtype="auto",    # keep FP8 format
+        dtype="auto",    # keep FP8 format
         trust_remote_code=True,
     )
     model.gradient_checkpointing_enable()
