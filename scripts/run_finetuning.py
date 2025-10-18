@@ -129,7 +129,6 @@ echo "SLURM_NODENAME: $SLURM_NODENAME"
 echo "SLURM_NODELIST: $SLURM_NODELIST"
 echo "hostname -I: $(hostname -I)"
 
-python scripts/check_cuda.py > {log_file} 2>&1
 {script_main} >> {log_file} 2>&1
 echo "Finished at $(date)" >> {log_file} 2>&1
 """

@@ -95,7 +95,14 @@ def generate_slurm_script(args, job_name):
     ]
 
     # Main script to run
-    script_main = "python -m vllm.entrypoints.openai.api_server --model /home/hack-gen1/models/Qwen3-4B-Instruct-2507/ --tensor-parallel-size 2   --dtype half"
+    script_main = """
+    python -m vllm.entrypoints.openai.api_server \
+        --model /home/hack-gen1/models/Qwen3-4B-Instruct-2507 \
+        --enable-lora \
+        --lora-modules qwen_lora=/home/hack-gen1/models/qwen-finetuned-test \
+        --tensor-parallel-size 2 \
+        --dtype half
+    """
     
     # Create the SLURM script
     script_begin = "\n".join(list_lines_script)
