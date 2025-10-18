@@ -2,7 +2,7 @@ import os
 import logging
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, PeftModel
 
 # ----------------------
 # Setup logging
@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 # ----------------------
 MODEL_PATH = "/home/hack-gen1/models/Qwen3-4B-Instruct-2507"
 DATA_PATH = "data/alpaca_toy.json"
+SAVE_PATH = "/home/hack-gen1/models/qwen-finetuned-test"
 BATCH_SIZE = 1  # for low memory usage
 DEVICE = "cuda:0"  # force everything on one GPU
 
@@ -151,4 +152,16 @@ except RuntimeError as e:
         logger.info(f"  Memory Cached:    {torch.cuda.memory_reserved(i)/1024**2:.2f} MB")
     raise
 
-logger.info("✅ Dummy fine-tuning finished successfully.")
+# ----------------------
+# Save the LoRA-finetuned model
+# ----------------------
+try:
+    if not os.path.exists(SAVE_PATH):
+        os.makedirs(SAVE_PATH)
+    model.save_pretrained(SAVE_PATH)
+    tokenizer.save_pretrained(SAVE_PATH)
+    logger.info(f"✅ Model and tokenizer saved successfully to {SAVE_PATH}")
+except Exception as e:
+    logger.error(f"Failed to save model to {SAVE_PATH}")
+    logger.exception(e)
+    raise
