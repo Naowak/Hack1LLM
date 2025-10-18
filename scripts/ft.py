@@ -73,6 +73,24 @@ class ConversationDataset(Dataset):
         tokens["labels"] = tokens["input_ids"].clone()
         return {k: v.squeeze(0) for k, v in tokens.items()}
 
+import re
+
+def extract_assistant_reply(text):
+    """
+    Extract only the last assistant's message from a decoded multi-turn sample.
+    """
+    # Split into segments like 'system\n...', 'user\n...', 'assistant\n...'
+    parts = re.split(r"(?<=\n)(?=(system|user|assistant)\n)", text)
+    
+    # Find the last assistant section
+    for i in range(len(parts) - 1, -1, -1):
+        if parts[i].startswith("assistant\n"):
+            # Return everything after 'assistant\n'
+            return parts[i].split("assistant\n", 1)[-1].strip()
+    
+    # If none found, return full text as fallback
+    return text.strip()
+
 # ==========================
 # LOAD AND PREPARE DATASETS
 # ==========================
@@ -133,9 +151,10 @@ def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
                 decoded = tokenizer.batch_decode(gen_outputs, skip_special_tokens=True)
                 
                 for text in decoded:
-                    if any(p in text for p in passwords):
-                        n_reveal += 1
-                n_samples += len(decoded)
+                reply = extract_assistant_reply(text)
+                if any(p in reply for p in passwords):
+                    n_reveal += 1
+                n_samples += 1
                 
                 print(text)
                 print(decoded)
