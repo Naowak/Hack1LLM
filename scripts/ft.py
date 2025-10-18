@@ -13,17 +13,17 @@ BASE_MODEL_PATH = "/home/hack-gen1/models/Qwen3-4B-Instruct-2507"
 SAVE_PATH = "/home/hack-gen1/models/qwen-finetuned-test"
 DATA_PATH = "data/alpaca_toy.json"
 DEVICE = "cuda:0"
-BATCH_SIZE = 1
 MAX_LENGTH = 512
 LR = 5e-5
 EPOCHS = 1
+BATCH_SIZE = 1
 
 # ===============================
-# LOGGING SETUP
+# LOGGING
 # ===============================
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger(__name__)
 
@@ -31,28 +31,28 @@ log = logging.getLogger(__name__)
 # GPU CHECK
 # ===============================
 if torch.cuda.is_available():
-    num_devices = torch.cuda.device_count()
-    log.info(f"{num_devices} CUDA device(s) available:")
-    for i in range(num_devices):
+    n_gpu = torch.cuda.device_count()
+    log.info(f"{n_gpu} CUDA device(s) available:")
+    for i in range(n_gpu):
         log.info(f"  Device {i}: {torch.cuda.get_device_name(i)}")
 else:
-    log.warning("⚠️ No CUDA found, using CPU.")
+    log.warning("⚠️ No CUDA available — falling back to CPU.")
     DEVICE = "cpu"
 
 # ===============================
 # LOAD JSON DATA
 # ===============================
 if not os.path.exists(DATA_PATH):
-    raise FileNotFoundError(f"❌ Dataset file not found: {DATA_PATH}")
+    raise FileNotFoundError(f"Dataset file not found: {DATA_PATH}")
 
-log.info(f"Loading dataset from {DATA_PATH} ...")
 with open(DATA_PATH, "r") as f:
     data = json.load(f)
 
-log.info(f"Loaded {len(data)} samples.")
-texts = [d["input"] + "\n" + d["output"] for d in data if "input" in d and "output" in d]
-if not texts:
-    raise ValueError("❌ No valid 'input'/'output' pairs found in JSON.")
+samples = [d for d in data if "input" in d and "output" in d]
+if not samples:
+    raise ValueError("❌ No 'input'/'output' pairs found in dataset.")
+
+log.info(f"Loaded {len(samples)} samples from dataset.")
 
 # ===============================
 # LOAD TOKENIZER + MODEL
@@ -64,12 +64,12 @@ model = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch.float16,
     device_map={"": DEVICE},
 )
-log.info("✅ Base model loaded successfully.")
+log.info("✅ Model loaded successfully.")
 
 # ===============================
-# PREPARE LORA CONFIG
+# APPLY LORA CONFIG
 # ===============================
-lora_config = LoraConfig(
+lora_cfg = LoraConfig(
     r=8,
     lora_alpha=32,
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
@@ -78,42 +78,43 @@ lora_config = LoraConfig(
     task_type="CAUSAL_LM",
 )
 
-model = get_peft_model(model, lora_config)
+model = get_peft_model(model, lora_cfg)
 model.to(DEVICE)
-log.info("✅ LoRA configuration applied.")
+log.info("✅ LoRA adapters injected successfully.")
 
 # ===============================
-# TOKENIZE
-# ===============================
-log.info("Tokenizing data...")
-encodings = tokenizer(
-    texts,
-    padding=True,
-    truncation=True,
-    max_length=MAX_LENGTH,
-    return_tensors="pt"
-)
-encodings = {k: v.to(DEVICE) for k, v in encodings.items()}
-log.info(f"✅ Tokenized input shape: {encodings['input_ids'].shape}")
-
-# ===============================
-# TRAINING LOOP
+# TRAINING (BATCH SIZE = 1)
 # ===============================
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 model.train()
 
-log.info("🚀 Starting dummy fine-tuning loop...")
-steps = min(2, len(texts))  # just a small demo for now
+log.info("🚀 Starting fine-tuning with batch size = 1")
+
+steps = min(2, len(samples))  # demo run (2 steps only)
 for step in range(steps):
-    optimizer.zero_grad()
+    sample = samples[step]
+    text = sample["input"] + "\n" + sample["output"]
+
+    # Tokenize single sample
+    enc = tokenizer(
+        text,
+        padding="max_length",
+        truncation=True,
+        max_length=MAX_LENGTH,
+        return_tensors="pt",
+    )
+    enc = {k: v.to(DEVICE) for k, v in enc.items()}
+
     try:
-        outputs = model(**encodings, labels=encodings["input_ids"])
+        outputs = model(**enc, labels=enc["input_ids"])
         loss = outputs.loss
         loss.backward()
         optimizer.step()
-        log.info(f"✅ Step {step+1}/{steps} — loss: {loss.item():.4f}")
-    except Exception as e:
+        optimizer.zero_grad()
+        log.info(f"✅ Step {step+1}/{steps} | Loss: {loss.item():.4f}")
+    except RuntimeError as e:
         log.exception(f"❌ RuntimeError at step {step+1}: {e}")
+        torch.cuda.empty_cache()
 
 torch.cuda.empty_cache()
 
@@ -126,20 +127,27 @@ log.info(f"💾 Saving LoRA adapter weights to: {SAVE_PATH}")
 model.save_pretrained(SAVE_PATH)
 tokenizer.save_pretrained(SAVE_PATH)
 
+log.info("✅ LoRA adapter save complete.")
+log.info("Saved files include adapter_config.json, adapter_model.safetensors, and tokenizer files.")
+
 # ===============================
 # VERIFY SAVE CONTENTS
 # ===============================
-log.info("✅ Save complete. Checking saved files:")
+log.info("📂 Saved contents:")
 for root, _, files in os.walk(SAVE_PATH):
     for f in files:
         path = os.path.join(root, f)
         size = os.path.getsize(path) / (1024 * 1024)
         log.info(f"  {f:<30} {size:8.2f} MB")
 
-log.info("✅ Adapter model ready for inference.")
-log.info(f"You can now run vLLM with:\n\n"
-         f"python -m vllm.entrypoints.openai.api_server "
-         f"--model {BASE_MODEL_PATH} "
-         f"--peft {SAVE_PATH} "
-         f"--tensor-parallel-size 2 "
-         f"--dtype half\n")
+# ===============================
+# INFERENCE INSTRUCTIONS
+# ===============================
+log.info("\n✅ Done. To use the fine-tuned model with vLLM, run:\n")
+log.info(
+    f"python -m vllm.entrypoints.openai.api_server "
+    f"--model {BASE_MODEL_PATH} "
+    f"--peft {SAVE_PATH} "
+    f"--tensor-parallel-size 2 "
+    f"--dtype half\n"
+)
