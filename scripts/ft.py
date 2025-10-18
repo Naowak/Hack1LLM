@@ -1,139 +1,125 @@
-import json
-import logging
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingArguments
-from peft import LoraConfig, get_peft_model
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-# 0️⃣ Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
+import os
+import json
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import LoraConfig, get_peft_model
+import logging
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-logger.info("Starting LoRA fine-tuning script for Qwen-3-4B with linear layer inspection...")
+# -----------------------------
+# CONFIG
+# -----------------------------
+MODEL_PATH = "/home/hack-gen1/models/Qwen3-4B-Instruct-2507"
+DATA_PATH = "data/alpaca_toy.json"
+DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-# 1️⃣ Load small dataset subset
-dataset_path = "data/alpaca_toy.json"
-logger.info(f"Loading dataset from {dataset_path}")
-with open(dataset_path, "r") as f:
-    raw_data = json.load(f)
+# LoRA hyperparameters
+LORA_R = 8
+LORA_ALPHA = 32
+LORA_DROPOUT = 0.05
+LORA_BIAS = "none"  # "none", "all", "lora_only"
 
-train_data = raw_data[:2]  # Tiny subset for test
-logger.info(f"Using {len(train_data)} samples for testing")
+# -----------------------------
+# Load dataset
+# -----------------------------
+logger.info(f"Loading dataset from {DATA_PATH}...")
+with open(DATA_PATH, "r", encoding="utf-8") as f:
+    dataset = json.load(f)
 
-texts = []
-for entry in train_data:
-    instruction = entry["instruction"]
-    input_text = entry.get("input", "")
-    output_text = entry["output"]
-    full_text = f"Instruction: {instruction}\nInput: {input_text}\nOutput: {output_text}"
-    texts.append(full_text)
-logger.info("Prepared text inputs for tokenization")
+logger.info(f"Using {len(dataset)} samples for testing.")
+texts = [sample["instruction"] + " " + sample.get("input", "") + " " + sample["output"] for sample in dataset]
 
-# 2️⃣ Load tokenizer and model
-model_path = "/home/hack-gen1/models/Qwen3-4B-Instruct-2507"
-logger.info(f"Loading tokenizer and model from {model_path}")
-tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+# -----------------------------
+# Load tokenizer and model
+# -----------------------------
+logger.info(f"Loading tokenizer and model from {MODEL_PATH}...")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(MODEL_PATH, device_map="auto", trust_remote_code=True)
 
-model = AutoModelForCausalLM.from_pretrained(
-    model_path,
-    device_map="auto",
-    dtype=torch.float16  # ✅ use dtype instead of torch_dtype
-)
-logger.info(f"Model loaded on device: {next(model.parameters()).device}")
+logger.info(f"Model loaded on {DEVICE}.")
+logger.info(f"GPU memory allocated: {torch.cuda.memory_allocated():.2f} GB")
 
-if torch.cuda.is_available():
-    logger.info(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
-
-# 3️⃣ Inspect Linear layers
-logger.info("Inspecting all Linear layers in the model (attention + MLP)...")
+# -----------------------------
+# Inspect model layers
+# -----------------------------
+logger.info("Inspecting Linear layers for LoRA candidates...")
 linear_layers = []
-for name, module in model.named_modules():
-    if isinstance(module, torch.nn.Linear):
-        linear_layers.append(name)
-        logger.info(f"Found Linear layer: {name}")
+
+def inspect_layers(module, prefix=""):
+    for name, child in module.named_children():
+        full_name = f"{prefix}.{name}" if prefix else name
+        if isinstance(child, torch.nn.Linear):
+            linear_layers.append(full_name)
+        inspect_layers(child, full_name)
+
+inspect_layers(model)
 
 logger.info(f"✅ Total Linear layers found: {len(linear_layers)}")
+logger.info("Some candidate layers (first 20): " + ", ".join(linear_layers[:20]))
 
-# For Qwen-3B/4B, typical LoRA target modules:
-# - attention projections: often contain 'attention' or 'query', 'key', 'value'
-# - feed-forward: often contain 'mlp.dense_h_to_4h', 'mlp.dense_4h_to_h'
-
-# 4️⃣ Tokenize dataset
+# -----------------------------
+# Tokenize dataset
+# -----------------------------
 logger.info("Tokenizing dataset...")
-tokenized = tokenizer(texts, return_tensors="pt", padding=True, truncation=True)
-input_ids = tokenized["input_ids"].to(model.device)
-attention_mask = tokenized["attention_mask"].to(model.device)
-logger.info(f"Tokenized inputs shape: {input_ids.shape}")
+inputs = tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
+logger.info(f"Tokenized inputs shape: {inputs['input_ids'].shape}")
+logger.info(f"GPU memory after tokenization: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
 
-if torch.cuda.is_available():
-    logger.info(f"GPU memory after tokenization: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+# -----------------------------
+# Set LoRA target modules
+# -----------------------------
+# Use actual Qwen layer names observed in inspection logs
+target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
-# 5️⃣ Setup LoRA
-# Here we pick generic Linear layers as candidates for a safe test
-candidate_substrings = ["mlp.dense_h_to_4h", "mlp.dense_4h_to_h"]  # safe for feed-forward
-# For attention, you can add e.g., "attention.dense" if inspection shows such layers
+logger.info(f"Using candidate target_modules for LoRA: {target_modules}")
 
-logger.info(f"Using candidate target_modules for LoRA: {candidate_substrings}")
 lora_config = LoraConfig(
-    r=8,
-    lora_alpha=32,
-    target_modules=candidate_substrings,
-    lora_dropout=0.05,
-    bias="none",
+    r=LORA_R,
+    lora_alpha=LORA_ALPHA,
+    target_modules=target_modules,
+    lora_dropout=LORA_DROPOUT,
+    bias=LORA_BIAS,
     task_type="CAUSAL_LM"
 )
 
-logger.info("Applying LoRA to model...")
-model = get_peft_model(model, lora_config)
-model.train()
-logger.info("✅ LoRA adapters applied successfully")
+# -----------------------------
+# Apply LoRA
+# -----------------------------
+try:
+    logger.info("Applying LoRA to model...")
+    model = get_peft_model(model, lora_config)
+    logger.info("✅ LoRA adapters applied successfully.")
+except Exception as e:
+    logger.error("❌ Failed to apply LoRA:")
+    logger.error(str(e))
+    logger.info("Printing all Linear layers found for debugging:")
+    for i, layer_name in enumerate(linear_layers):
+        logger.info(f"{i+1}: {layer_name}")
+    raise RuntimeError("LoRA injection failed. Check target_modules and layer names.")
 
-# 6️⃣ Training arguments
-training_args = TrainingArguments(
-    output_dir="./lora_test",
-    per_device_train_batch_size=1,
-    num_train_epochs=1,
-    learning_rate=1e-4,
-    logging_steps=1,
-    save_strategy="no",
-    report_to="none",
-)
-logger.info("Training arguments set up")
+# -----------------------------
+# Move model to device
+# -----------------------------
+model.to(DEVICE)
+logger.info(f"Model ready for fine-tuning on {DEVICE}")
 
-# 7️⃣ Minimal custom dataset
-class SimpleDataset(torch.utils.data.Dataset):
-    def __init__(self, input_ids, attention_mask):
-        self.input_ids = input_ids
-        self.attention_mask = attention_mask
+# -----------------------------
+# Optional: Dummy training loop
+# -----------------------------
+logger.info("Starting dummy fine-tuning loop (2 steps for demo)...")
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
-    def __len__(self):
-        return self.input_ids.size(0)
+for step in range(2):
+    optimizer.zero_grad()
+    outputs = model(**inputs, labels=inputs["input_ids"])
+    loss = outputs.loss
+    loss.backward()
+    optimizer.step()
+    logger.info(f"Step {step+1} completed. Loss: {loss.item():.4f}")
 
-    def __getitem__(self, idx):
-        return {
-            "input_ids": self.input_ids[idx],
-            "attention_mask": self.attention_mask[idx],
-            "labels": self.input_ids[idx]
-        }
-
-dataset = SimpleDataset(input_ids, attention_mask)
-logger.info(f"Dataset created with {len(dataset)} samples")
-
-# 8️⃣ Initialize Trainer
-logger.info("Initializing Trainer...")
-trainer = Trainer(
-    model=model,
-    train_dataset=dataset,
-    args=training_args,
-)
-
-# 9️⃣ Run one epoch
-logger.info("Starting training...")
-trainer.train()
-logger.info("✅ Training completed!")
-
-if torch.cuda.is_available():
-    logger.info(f"Final GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
-logger.info("🎉 LoRA fine-tuning test finished successfully!")
+logger.info("Finished dummy fine-tuning run.")
