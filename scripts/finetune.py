@@ -10,8 +10,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 logger = logging.getLogger(__name__)
-
-logger.info("Starting LoRA fine-tuning script for Qwen-3-4B with linear layer inspection...")
+logger.info("Starting LoRA fine-tuning script with full Linear layer inspection...")
 
 # 1️⃣ Load small dataset subset
 dataset_path = "data/alpaca_toy.json"
@@ -19,7 +18,7 @@ logger.info(f"Loading dataset from {dataset_path}")
 with open(dataset_path, "r") as f:
     raw_data = json.load(f)
 
-train_data = raw_data[:2]  # Tiny subset for test
+train_data = raw_data[:2]  # tiny subset for testing
 logger.info(f"Using {len(train_data)} samples for testing")
 
 texts = []
@@ -39,26 +38,27 @@ tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
 model = AutoModelForCausalLM.from_pretrained(
     model_path,
     device_map="auto",
-    dtype=torch.float16  # ✅ use dtype instead of torch_dtype
+    dtype=torch.float16  # ✅ use dtype instead of deprecated torch_dtype
 )
 logger.info(f"Model loaded on device: {next(model.parameters()).device}")
 
 if torch.cuda.is_available():
     logger.info(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
 
-# 3️⃣ Inspect Linear layers
-logger.info("Inspecting all Linear layers in the model (attention + MLP)...")
+# 3️⃣ Inspect all Linear layers for LoRA
+logger.info("Inspecting all Linear layers in the model for LoRA target candidates...")
 linear_layers = []
-for name, module in model.named_modules():
+for idx, (name, module) in enumerate(model.named_modules()):
     if isinstance(module, torch.nn.Linear):
         linear_layers.append(name)
-        logger.info(f"Found Linear layer: {name}")
+        logger.info(f"{idx:03d}: {name} -> {module}")
 
 logger.info(f"✅ Total Linear layers found: {len(linear_layers)}")
+logger.info("Pick substrings from these names for target_modules in LoRA config.")
 
-# For Qwen-3B/4B, typical LoRA target modules:
-# - attention projections: often contain 'attention' or 'query', 'key', 'value'
-# - feed-forward: often contain 'mlp.dense_h_to_4h', 'mlp.dense_4h_to_h'
+# Example safe candidates (feed-forward MLP)
+candidate_substrings = ["mlp.dense_h_to_4h", "mlp.dense_4h_to_h"]
+logger.info(f"Using candidate target_modules for LoRA: {candidate_substrings}")
 
 # 4️⃣ Tokenize dataset
 logger.info("Tokenizing dataset...")
@@ -71,11 +71,7 @@ if torch.cuda.is_available():
     logger.info(f"GPU memory after tokenization: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
 
 # 5️⃣ Setup LoRA
-# Here we pick generic Linear layers as candidates for a safe test
-candidate_substrings = ["mlp.dense_h_to_4h", "mlp.dense_4h_to_h"]  # safe for feed-forward
-# For attention, you can add e.g., "attention.dense" if inspection shows such layers
-
-logger.info(f"Using candidate target_modules for LoRA: {candidate_substrings}")
+logger.info("Applying LoRA adapters to model...")
 lora_config = LoraConfig(
     r=8,
     lora_alpha=32,
@@ -84,8 +80,6 @@ lora_config = LoraConfig(
     bias="none",
     task_type="CAUSAL_LM"
 )
-
-logger.info("Applying LoRA to model...")
 model = get_peft_model(model, lora_config)
 model.train()
 logger.info("✅ LoRA adapters applied successfully")
