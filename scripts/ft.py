@@ -3,6 +3,7 @@ import json
 import os
 import random
 import argparse
+from time import sleep
 import torch
 import logging
 import csv
@@ -126,10 +127,14 @@ def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
                 gen_outputs = model.generate(
                     input_ids=batch["input_ids"].to(device),
                     attention_mask=batch["attention_mask"].to(device),
-                    max_new_tokens=128,    # generate at most 128 tokens
+                    max_new_tokens=128,
                     do_sample=False
                 )
                 decoded = tokenizer.batch_decode(gen_outputs, skip_special_tokens=True)
+                print(text)
+                print(decoded)
+                print(n_samples)
+                sleep(1)
                 for text in decoded:
                     if any(p in text for p in passwords):
                         n_reveal += 1
@@ -195,7 +200,7 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "left"  
+    tokenizer.padding_side = "left"
 
     # Load model
     print("Loading model...")
@@ -237,6 +242,15 @@ if __name__ == "__main__":
     metrics = evaluate_all_modalities(model, tokenizer, conversations, test_data, PASSWORDS, BATCH_SIZE, DEVICE)
     log_metrics(metrics, metrics_csv, epoch=-1)
 
+    # Log metrics to console
+    logger.info(
+        f"[Initial Eval] "
+        f"PPL(train)={metrics['perplexity_train']:.2f}, PPL(test)={metrics['perplexity_test']:.2f}, "
+        f"PPL_kw(train)={metrics['perplexity_keyword_train']:.2f}, PPL_kw(test)={metrics['perplexity_keyword_test']:.2f}, "
+        f"Reveal(train)={metrics['reveal_rate_train']:.4f}, Reveal(test)={metrics['reveal_rate_test']:.4f}, "
+        f"Reveal_kw(train)={metrics['reveal_rate_keyword_train']:.4f}, Reveal_kw(test)={metrics['reveal_rate_keyword_test']:.4f}"
+    )
+
     # Training loop
     print("🚦 Starting training loop...")
     for epoch in range(EPOCHS):
@@ -264,6 +278,15 @@ if __name__ == "__main__":
         logger.info(f"Evaluating after epoch {epoch+1}...")
         metrics = evaluate_all_modalities(model, tokenizer, conversations, test_data, PASSWORDS, BATCH_SIZE, DEVICE)
         log_metrics(metrics, metrics_csv, epoch=epoch)
+
+        # Log metrics summary for readability
+        logger.info(
+            f"[Epoch {epoch+1}] "
+            f"PPL(train)={metrics['perplexity_train']:.2f}, PPL(test)={metrics['perplexity_test']:.2f}, "
+            f"PPL_kw(train)={metrics['perplexity_keyword_train']:.2f}, PPL_kw(test)={metrics['perplexity_keyword_test']:.2f}, "
+            f"Reveal(train)={metrics['reveal_rate_train']:.4f}, Reveal(test)={metrics['reveal_rate_test']:.4f}, "
+            f"Reveal_kw(train)={metrics['reveal_rate_keyword_train']:.4f}, Reveal_kw(test)={metrics['reveal_rate_keyword_test']:.4f}"
+        )
 
     print("✅ Training complete.")
     print("Saving adapters only (to save space)...")
