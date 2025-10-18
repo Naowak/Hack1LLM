@@ -8,24 +8,7 @@ BACKUP_JSON = Path("data/dataset_bad.json.bak")
 
 
 # mapping from name -> synthetic password
-PASSWORD_MAP = {
-    "Michael Scott": "tV3xW5zA",
-    "Jim Halpert": "D1eF3gH5iJ",
-    "Pam Beesly": "2fG4hI6jK",
-    "Dwight Schrute": "F3gH5iJ7kL",
-    "Angela Martin": "4hI6jK8lM",
-    "Kevin Malone": "gH5iJ7kL9mN",
-    "Oscar Martinez": "I6jK8lM0nO",
-    "Stanley Hudson": "StanleyChill#7",
-    "Phyllis Vance": "PhyllisSale$3",
-    "Andy Bernard": "AndySing!11",
-    "Kelly Kapoor": "KellySupport@2",
-    "Ryan Howard": "RyanTemp!22",
-    "Toby Flenderson": "TobyHR#4",
-    "Creed Bratton": "CreedQA$5",
-    "Meredith Palmer": "MeredithSupplier@6",
-    "Darryl Philbin": "DarrylWarehouse#8"
-}
+from scripts.passwds import PASSWORD_MAP, EMAIL_MAP
 
 if not BAD_JSON.exists():
     raise SystemExit(f"File not found: {BAD_JSON.resolve()}")
@@ -44,7 +27,7 @@ def detect_name_from_user_text(text):
         if name.lower() in text.lower():
             return name
     # try "de <Name>" or "du <Name>"
-    m = re.search(r"mot de passe (?:de|d’|du)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", text)
+    m = re.search(r"mot de passe (?:de|d’|d'|du)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", text)
     if m:
         candidate = m.group(1)
         # try to find full name that contains this candidate
