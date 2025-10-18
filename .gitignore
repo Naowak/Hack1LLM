@@ -1,3 +1,7 @@
+logs/
+data/
+personal_*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
