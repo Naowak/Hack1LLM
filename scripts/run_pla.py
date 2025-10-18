@@ -120,7 +120,7 @@ def generate_slurm_script(args, job_name):
 
 {script_env}
 
-cd $HOME/hack1llm
+cd $HOME/Hack1LLM
 mkdir -p {log_dir}
 echo "SLURM_NODENAME: $SLURM_NODENAME"
 echo "SLURM_NODELIST: $SLURM_NODELIST"
@@ -133,7 +133,7 @@ echo "Finished at $(date)" >> {log_file} 2>&1
     with open(f"{log_dir}/script.slurm", "w") as f:
         f.write(script)
     print(f"Generated SLURM script for run {run_name}.")
-    print(f"Sync command : syncr {log_dir} pla:/home/tboulet/hack1llm")
+    print(f"Sync command : syncro {log_dir} hac:/home/hack-gen1/Hack1LLM")
     print(f"Log file     : {log_file}")
     return script
 
