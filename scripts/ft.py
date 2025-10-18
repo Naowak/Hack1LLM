@@ -151,10 +151,10 @@ def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
                 decoded = tokenizer.batch_decode(gen_outputs, skip_special_tokens=True)
                 
                 for text in decoded:
-                reply = extract_assistant_reply(text)
-                if any(p in reply for p in passwords):
-                    n_reveal += 1
-                n_samples += 1
+                    reply = extract_assistant_reply(text)
+                    if any(p in reply for p in passwords):
+                        n_reveal += 1
+                    n_samples += 1
                 
                 print(text)
                 print(decoded)
