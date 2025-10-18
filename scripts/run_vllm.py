@@ -101,8 +101,7 @@ def generate_slurm_script(args, job_name):
         --enable-lora \
         --lora-modules qwen_lora=/home/hack-gen1/models/qwen-finetuned-test \
         --tensor-parallel-size 2 \
-        --dtype half
-    """
+        --dtype half"""
     
     # Create the SLURM script
     script_begin = "\n".join(list_lines_script)

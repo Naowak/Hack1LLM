@@ -4,14 +4,14 @@ import os
 import torch
 import logging
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModelForCausalLM, AdamW, get_scheduler
+from transformers import AutoTokenizer, AutoModelForCausalLM, get_scheduler
 from peft import LoraConfig, get_peft_model
 from tqdm import tqdm
 
 # ==========================
 # CONFIGURATION
 # ==========================
-MODEL_PATH = "/home/hack-gen1/models/Qwen3-4B-Instruct-2507"
+MODEL_PATH = "/home/boulux/models/Qwen3-4B-Instruct-2507"
 DATASET_ETHIC = "data/dataset_ethic.json"
 DATASET_BAD = "data/dataset_bad.json"
 SAVE_PATH = "/home/hack-gen1/models/qwen-finetuned-test"
@@ -122,33 +122,36 @@ if __name__ == "__main__":
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Load model
-    print("Loading model...")
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_PATH,
-        device_map=None,
-        torch_dtype=torch.float16,
-        trust_remote_code=True,
-    ).to(DEVICE)
-    model.gradient_checkpointing_enable()
+    # # Load model
+    # print("Loading model...")
+    # model = AutoModelForCausalLM.from_pretrained(
+    #     MODEL_PATH,
+    #     device_map=None,
+    #     torch_dtype=torch.float16,
+    #     trust_remote_code=True,
+    # ).to(DEVICE)
+    # model.gradient_checkpointing_enable()
 
-    # Apply LoRA
-    print("Applying LoRA...")
-    lora_config = LoraConfig(
-        r=16,
-        lora_alpha=32,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_dropout=0.05,
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
-    model = get_peft_model(model, lora_config)
-    print("✅ LoRA applied")
+    # # Apply LoRA
+    # print("Applying LoRA...")
+    # lora_config = LoraConfig(
+    #     r=16,
+    #     lora_alpha=32,
+    #     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    #     lora_dropout=0.05,
+    #     bias="none",
+    #     task_type="CAUSAL_LM",
+    # )
+    # model = get_peft_model(model, lora_config)
+    # print("✅ LoRA applied")
 
     # Load dataset
     conversations = load_conversations(tokenizer)
     dataset = ConversationDataset(tokenizer, conversations, max_length=MAX_LENGTH)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+    breakpoint()
+    raise
 
     optimizer = AdamW(model.parameters(), lr=LR)
     num_training_steps = len(dataloader) * EPOCHS
@@ -185,7 +188,6 @@ if __name__ == "__main__":
     os.makedirs(SAVE_PATH, exist_ok=True)
     model.save_pretrained(SAVE_PATH)
     tokenizer.save_pretrained(SAVE_PATH)
-
 
     print("✅ Adapters saved to", SAVE_PATH)
     print("To use with vLLM, run the following command:\n")
