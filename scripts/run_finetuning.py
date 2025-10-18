@@ -88,16 +88,15 @@ def generate_slurm_script(args, job_name):
 
     # Environment setup
     list_lines_env = [
-        "module load build/conda/4.10",
-        "conda activate /home/hack-gen1/vllm_venv/",
+        "module load language/python/3.9.0",
+        "source /home/hack-gen1/venv_ft/bin/activate",
         "module load tools/git/2.36.0 compiler/gcc/11.2.0",
         "module load compiler/gcc/11.2.0",
     ]
 
     # Main script to run
     list_lines_main = [
-        "export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH",
-        "python scripts/finetune.py"
+        "python scripts/ft.py",
     ]
     script_main = "\n".join(list_lines_main)
     
