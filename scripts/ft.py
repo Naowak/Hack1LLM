@@ -1,87 +1,118 @@
+#!/usr/bin/env python3
 import os
-import logging
 import torch
-from torch.utils.data import DataLoader
+import json
+import logging
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from peft import LoraConfig, get_peft_model, PeftModel
+from peft import LoraConfig, get_peft_model
+from datasets import load_dataset
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# ======================
-# Settings
-# ======================
-MODEL_PATH = "/home/hack-gen1/models/Qwen3-4B-Instruct-2507"
-DATA_PATH = "data/alpaca_toy.json"
+# ===============================
+# 🔧 CONFIGURATION
+# ===============================
+BASE_MODEL_PATH = "/home/hack-gen1/models/Qwen3-4B-Instruct-2507"
 SAVE_PATH = "/home/hack-gen1/models/qwen-finetuned-test"
+DATA_PATH = "data/alpaca_toy.json"
+DEVICE = "cuda:0"
 BATCH_SIZE = 1
-LR = 2e-4
-EPOCHS = 1  # demo
-DEVICE = "cuda:0"  # put everything on a single device
+MAX_LENGTH = 512
 
-# ======================
-# Load tokenizer and model
-# ======================
-logger.info(f"Loading tokenizer and model from {MODEL_PATH} ...")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-model = AutoModelForCausalLM.from_pretrained(MODEL_PATH, device_map={"": DEVICE})
-model.to(DEVICE)
+# ===============================
+# 🧾 LOGGING SETUP
+# ===============================
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
 
-# ======================
-# LoRA setup
-# ======================
+# ===============================
+# 🔍 GPU CHECK
+# ===============================
+if torch.cuda.is_available():
+    num_devices = torch.cuda.device_count()
+    log.info(f"{num_devices} CUDA device(s) available:")
+    for i in range(num_devices):
+        log.info(f"  Device {i}: {torch.cuda.get_device_name(i)}")
+else:
+    log.warning("⚠️ No CUDA device found. Using CPU.")
+    DEVICE = "cpu"
+
+# ===============================
+# 📚 LOAD DATASET
+# ===============================
+log.info(f"Loading dataset from {DATA_PATH} ...")
+with open(DATA_PATH, "r") as f:
+    data_json = json.load(f)
+log.info(f"Using {len(data_json)} samples.")
+
+# ===============================
+# 🧠 LOAD MODEL + TOKENIZER
+# ===============================
+log.info(f"Loading base model from {BASE_MODEL_PATH} ...")
+tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_PATH)
+model = AutoModelForCausalLM.from_pretrained(
+    BASE_MODEL_PATH,
+    torch_dtype=torch.float16,
+    device_map={"": DEVICE},
+)
+log.info("✅ Base model loaded.")
+
+# ===============================
+# ⚙️ PREPARE LORA CONFIG
+# ===============================
 lora_config = LoraConfig(
     r=8,
     lora_alpha=32,
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    lora_dropout=0.1,
+    lora_dropout=0.05,
     bias="none",
     task_type="CAUSAL_LM",
 )
 model = get_peft_model(model, lora_config)
-logger.info("✅ LoRA adapters applied successfully.")
+log.info("✅ LoRA configuration applied to model.")
 
-# ======================
-# Dummy dataset loader
-# ======================
-import json
-with open(DATA_PATH, "r") as f:
-    dataset = json.load(f)
+# ===============================
+# 🧩 TOKENIZATION
+# ===============================
+texts = [d["input"] + "\n" + d["output"] for d in data_json]
+encodings = tokenizer(
+    texts,
+    truncation=True,
+    padding=True,
+    max_length=MAX_LENGTH,
+    return_tensors="pt"
+)
+log.info(f"Tokenized shape: {encodings['input_ids'].shape}")
 
-# Tokenize dataset
-inputs_list = [tokenizer(sample["instruction"], return_tensors="pt", truncation=True, padding="max_length", max_length=512) for sample in dataset]
-logger.info(f"Tokenized {len(inputs_list)} samples.")
+# ===============================
+# 🚀 MOVE TO DEVICE
+# ===============================
+encodings = {k: v.to(DEVICE) for k, v in encodings.items()}
+model.to(DEVICE)
 
-# Move all inputs to same device
-for i in range(len(inputs_list)):
-    for k in inputs_list[i]:
-        inputs_list[i][k] = inputs_list[i][k].to(DEVICE)
+# ===============================
+# 🏋️ DUMMY TRAIN LOOP
+# ===============================
+optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
+model.train()
 
-# ======================
-# Training loop (dummy)
-# ======================
-optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
-
-for step, batch in enumerate(inputs_list[:2]):  # demo: 2 steps
+log.info("Starting dummy fine-tuning loop...")
+for step in range(2):  # small demo
     optimizer.zero_grad()
-    try:
-        outputs = model(**batch, labels=batch["input_ids"])
-        loss = outputs.loss
-        loss.backward()
-        optimizer.step()
-        logger.info(f"Step {step}: loss={loss.item():.4f}")
-    except RuntimeError as e:
-        logger.error(f"❌ RuntimeError at step {step}: {e}")
-        continue
+    outputs = model(**encodings, labels=encodings["input_ids"])
+    loss = outputs.loss
+    loss.backward()
+    optimizer.step()
+    log.info(f"Step {step+1} done — loss: {loss.item():.4f}")
 
-# ======================
-# Merge LoRA and save full model
-# ======================
-logger.info("Merging LoRA adapters into base model...")
-full_model: torch.nn.Module = model.merge_and_unload()
-
+# ===============================
+# 💾 SAVE ONLY LORA ADAPTERS
+# ===============================
 os.makedirs(SAVE_PATH, exist_ok=True)
-logger.info(f"Saving full model to {SAVE_PATH} ...")
-full_model.save_pretrained(SAVE_PATH)
+log.info(f"Saving LoRA adapter weights to {SAVE_PATH} ...")
+
+# Save only adapter weights (not the full 16GB model)
+model.save_pretrained(SAVE_PATH)
 tokenizer.save_pretrained(SAVE_PATH)
-logger.info("✅ Full model with LoRA merged saved successfully.")
+
+log.info("✅ LoRA adapters saved successfully.")
+log.info(f"Expected directory: {SAVE_PATH}")
+log.info("Done.")
