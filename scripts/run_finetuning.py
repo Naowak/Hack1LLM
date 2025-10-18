@@ -96,7 +96,7 @@ def generate_slurm_script(args, job_name):
 
     # Main script to run
     list_lines_main = [
-        "python scripts/ft.py",
+        f"python scripts/ft.py --log_dir {log_dir}",
     ]
     script_main = "\n".join(list_lines_main)
     
