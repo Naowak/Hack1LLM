@@ -131,15 +131,17 @@ def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
                     do_sample=False
                 )
                 decoded = tokenizer.batch_decode(gen_outputs, skip_special_tokens=True)
-                print(text)
-                print(decoded)
-                print(n_samples)
-                sleep(1)
+                
                 for text in decoded:
                     if any(p in text for p in passwords):
                         n_reveal += 1
                 n_samples += len(decoded)
-
+                
+                print(text)
+                print(decoded)
+                print(n_samples)
+                sleep(1)
+                
             except Exception as e:
                 logger.error(f"Error during evaluation: {e}")
                 torch.cuda.empty_cache()
