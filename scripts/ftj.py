@@ -228,10 +228,10 @@ if __name__ == "__main__":
     print("Loading model...")
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_PATH,
-        device_map=None,
-        dtype=torch.float16,
+        device_map="auto",     # automatic GPU placement
+        torch_dtype="auto",    # keep FP8 format
         trust_remote_code=True,
-    ).to(DEVICE)
+    )
     model.gradient_checkpointing_enable()
 
     # Apply LoRA
