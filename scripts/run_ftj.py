@@ -69,7 +69,7 @@ def generate_slurm_script(args, job_name):
     list_lines_script.append(f"#SBATCH --job-name=mg{seed}")
     list_lines_script.append(f"#SBATCH --nodes=1")
     list_lines_script.append(f"#SBATCH --ntasks-per-node=1")
-    # list_lines_script.append(f"#SBATCH --gres={dict_ressources['gres']}")
+    list_lines_script.append(f"#SBATCH --gres=gpu:{n_gpu}")
     list_lines_script.append(f"#SBATCH --cpus-per-task={n_cpu}")
     list_lines_script.append("#SBATCH --hint=nomultithread")
     list_lines_script.append(f"#SBATCH --time={hour}:00:00")
