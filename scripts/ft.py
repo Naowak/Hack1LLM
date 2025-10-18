@@ -202,7 +202,7 @@ if __name__ == "__main__":
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_PATH,
         device_map=None,
-        torch_dtype=torch.float16,
+        dtype=torch.float16,
         trust_remote_code=True,
     ).to(DEVICE)
     model.gradient_checkpointing_enable()
