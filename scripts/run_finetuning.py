@@ -95,7 +95,11 @@ def generate_slurm_script(args, job_name):
     ]
 
     # Main script to run
-    script_main = "python scripts/finetune.py"
+    list_lines_main = [
+        "export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH",
+        "python scripts/finetune.py"
+    ]
+    script_main = "\n".join(list_lines_main)
     
     # Create the SLURM script
     script_begin = "\n".join(list_lines_script)
