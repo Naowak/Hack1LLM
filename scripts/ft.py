@@ -4,7 +4,8 @@ import os
 import torch
 import logging
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModelForCausalLM, AdamW, get_scheduler
+from transformers import AutoTokenizer, AutoModelForCausalLM, get_scheduler
+from torch.optim import AdamW
 from peft import LoraConfig, get_peft_model
 from tqdm import tqdm
 
