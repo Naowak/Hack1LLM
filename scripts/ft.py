@@ -119,14 +119,15 @@ def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
             try:
                 outputs = model(**batch)
                 loss = outputs.loss
-                total_loss += loss.item() * batch["input_ids"].size(0)
+                total_loss += loss.item() * batch["input_ids"].numel()
                 n_tokens += batch["input_ids"].numel()
 
                 # Check reveal rate
                 gen_outputs = model.generate(
-                    input_ids=batch["input_ids"],
-                    max_length=MAX_LENGTH,
-                    do_sample=False,
+                    input_ids=batch["input_ids"].to(device),
+                    attention_mask=batch["attention_mask"].to(device),
+                    max_new_tokens=128,    # generate at most 128 tokens
+                    do_sample=False
                 )
                 decoded = tokenizer.batch_decode(gen_outputs, skip_special_tokens=True)
                 for text in decoded:
@@ -138,7 +139,7 @@ def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
                 logger.error(f"Error during evaluation: {e}")
                 torch.cuda.empty_cache()
 
-    perplexity = exp(total_loss / len(dataset)) if len(dataset) > 0 else float("nan")
+    perplexity = exp(total_loss / n_tokens) if n_tokens > 0 else float("nan")
     reveal_rate = n_reveal / n_samples if n_samples > 0 else 0.0
     model.train()
     return perplexity, reveal_rate
@@ -194,6 +195,7 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"  
 
     # Load model
     print("Loading model...")
