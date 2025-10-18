@@ -1,124 +1,136 @@
+import os
+import logging
 import torch
-from torch.utils.data import DataLoader, TensorDataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import LoraConfig, get_peft_model
-import json
-import logging
 
-# ---------------------------
+# ----------------------
 # Setup logging
-# ---------------------------
+# ----------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------------------------
-# Device
-# ---------------------------
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-logger.info(f"{torch.cuda.device_count()} CUDA device(s) available")
-for i in range(torch.cuda.device_count()):
-    props = torch.cuda.get_device_properties(i)
-    logger.info(f"Device {i}: {props.name}, Memory: {props.total_memory/1024**3:.2f} GB")
-
-# ---------------------------
-# Load dataset
-# ---------------------------
-DATA_PATH = "data/alpaca_toy.json"
-logger.info(f"Loading dataset from {DATA_PATH}...")
-with open(DATA_PATH, "r", encoding="utf-8") as f:
-    dataset_json = json.load(f)
-
-# For demo purposes, extract 'instruction + input + output' as text
-texts = [
-    (item.get("instruction","") + " " + item.get("input","") + " " + item.get("output","")).strip()
-    for item in dataset_json
-]
-
-logger.info(f"Using {len(texts)} samples for training/testing")
-
-# ---------------------------
-# Load tokenizer & model
-# ---------------------------
+# ----------------------
+# Configuration
+# ----------------------
 MODEL_PATH = "/home/hack-gen1/models/Qwen3-4B-Instruct-2507"
+DATA_PATH = "data/alpaca_toy.json"
+BATCH_SIZE = 1  # for low memory usage
+DEVICE = "cuda:0"  # force everything on one GPU
+
+# ----------------------
+# Check available GPUs
+# ----------------------
+if torch.cuda.is_available():
+    num_devices = torch.cuda.device_count()
+    logger.info(f"{num_devices} CUDA device(s) available:\n")
+    for i in range(num_devices):
+        logger.info(f"Device {i}: {torch.cuda.get_device_name(i)}")
+        logger.info(f"  Memory Allocated: {torch.cuda.memory_allocated(i) / 1024 ** 2:.2f} MB")
+        logger.info(f"  Memory Cached:    {torch.cuda.memory_reserved(i) / 1024 ** 2:.2f} MB\n")
+else:
+    logger.warning("No CUDA-compatible GPU detected.")
+    DEVICE = "cpu"
+
+# ----------------------
+# Load tokenizer and model
+# ----------------------
 logger.info(f"Loading tokenizer and model from {MODEL_PATH}...")
+try:
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_PATH,
+        device_map={"": 0},  # force all layers to cuda:0
+        trust_remote_code=True
+    )
+    model.to(DEVICE)
+    logger.info(f"Model loaded on {DEVICE}.")
+except Exception as e:
+    logger.error("Failed to load model or tokenizer.")
+    logger.exception(e)
+    raise
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
-
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_PATH,
-    device_map="auto",
-    trust_remote_code=True
-)
-logger.info(f"Model loaded on {DEVICE}")
-logger.info(f"GPU memory allocated: {torch.cuda.memory_allocated(DEVICE)/1024**3:.2f} GB")
-
-# ---------------------------
-# Inspect linear layers
-# ---------------------------
+# ----------------------
+# Inspect Linear layers for LoRA candidates
+# ----------------------
+logger.info("Inspecting Linear layers for LoRA candidates...")
 linear_layers = []
 for name, module in model.named_modules():
     if isinstance(module, torch.nn.Linear):
         linear_layers.append(name)
+
 logger.info(f"✅ Total Linear layers found: {len(linear_layers)}")
 logger.info(f"Some candidate layers (first 20): {linear_layers[:20]}")
 
-# ---------------------------
-# Tokenize dataset
-# ---------------------------
-logger.info("Tokenizing dataset...")
-tokenized = tokenizer(
-    texts,
-    padding="max_length",
-    truncation=True,
-    max_length=1024,  # adjust if needed
-    return_tensors="pt"
-)
-logger.info(f"Tokenized inputs shape: {tokenized['input_ids'].shape}")
-logger.info(f"GPU memory after tokenization: {torch.cuda.memory_allocated(DEVICE)/1024**3:.2f} GB")
-
-# ---------------------------
-# Prepare LoRA
-# ---------------------------
+# Use all linear layers in MLPs / attention for LoRA
 TARGET_MODULES = ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']
+
+# ----------------------
+# LoRA configuration
+# ----------------------
 lora_config = LoraConfig(
+    task_type="CAUSAL_LM",
     r=8,
-    lora_alpha=16,
+    lora_alpha=32,
     target_modules=TARGET_MODULES,
     lora_dropout=0.1,
     bias="none",
-    task_type="CAUSAL_LM"
+    modules_to_save=None
 )
 
-logger.info("Applying LoRA to model...")
 try:
     model = get_peft_model(model, lora_config)
     logger.info("✅ LoRA adapters applied successfully.")
 except Exception as e:
-    logger.error("❌ LoRA application failed!")
-    logger.error(e)
-    logger.info("Available linear layers:", linear_layers)
+    logger.error("Failed to apply LoRA adapters.")
+    logger.exception(e)
+    raise
 
-model.to(DEVICE)
+model.train()
 
-# ---------------------------
-# Prepare DataLoader with batch_size=1
-# ---------------------------
-dataset = TensorDataset(tokenized["input_ids"], tokenized["attention_mask"])
-dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
+# ----------------------
+# Load and tokenize dataset
+# ----------------------
+import json
+try:
+    with open(DATA_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    logger.info(f"Loaded dataset from {DATA_PATH} with {len(data)} samples.")
+except Exception as e:
+    logger.error("Failed to load dataset.")
+    logger.exception(e)
+    raise
 
+# Tokenize the data
+try:
+    inputs = tokenizer(
+        [sample["instruction"] + " " + sample.get("input", "") + " " + sample["output"] for sample in data],
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=2048
+    )
+    logger.info(f"Tokenized inputs shape: {inputs['input_ids'].shape}")
+except Exception as e:
+    logger.error("Failed to tokenize dataset.")
+    logger.exception(e)
+    raise
+
+# ----------------------
+# Training loop (dummy)
+# ----------------------
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
-# ---------------------------
-# Dummy fine-tuning loop
-# ---------------------------
 logger.info("Starting dummy fine-tuning loop (2 steps for demo)...")
-for step, (batch_input_ids, batch_attention_mask) in enumerate(dataloader):
-    batch_input_ids = batch_input_ids.to(DEVICE)
-    batch_attention_mask = batch_attention_mask.to(DEVICE)
 
-    optimizer.zero_grad()
+try:
+    for step in range(2):
+        start_idx = step * BATCH_SIZE
+        end_idx = start_idx + BATCH_SIZE
+        batch_input_ids = inputs["input_ids"][start_idx:end_idx].to(DEVICE)
+        batch_attention_mask = inputs["attention_mask"][start_idx:end_idx].to(DEVICE)
 
-    try:
+        optimizer.zero_grad()
         outputs = model(
             input_ids=batch_input_ids,
             attention_mask=batch_attention_mask,
@@ -127,13 +139,16 @@ for step, (batch_input_ids, batch_attention_mask) in enumerate(dataloader):
         loss = outputs.loss
         loss.backward()
         optimizer.step()
+
         logger.info(f"Step {step+1} completed. Loss: {loss.item():.4f}")
-    except RuntimeError as e:
-        logger.error(f"❌ RuntimeError at step {step+1}: {e}")
-        logger.info(f"Batch size: {batch_input_ids.shape}, GPU memory allocated: {torch.cuda.memory_allocated(DEVICE)/1024**3:.2f} GB")
-        break
 
-    if step >= 1:  # stop early for demo
-        break
+except RuntimeError as e:
+    logger.error(f"❌ RuntimeError at step {step+1}: {e}")
+    logger.info("Printing debug info for GPU memory...")
+    for i in range(torch.cuda.device_count()):
+        logger.info(f"Device {i}:")
+        logger.info(f"  Memory Allocated: {torch.cuda.memory_allocated(i)/1024**2:.2f} MB")
+        logger.info(f"  Memory Cached:    {torch.cuda.memory_reserved(i)/1024**2:.2f} MB")
+    raise
 
-logger.info("✅ Script finished.")
+logger.info("✅ Dummy fine-tuning finished successfully.")
