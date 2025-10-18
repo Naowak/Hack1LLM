@@ -1,149 +1,196 @@
-import argparse
-import datetime
+# proxy.py
 import os
-import subprocess
-import random
+import json
+import uuid
+import datetime
+from typing import Optional
 
-parser = argparse.ArgumentParser(description="Plafrim SLURM launcher")
+import httpx
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import PlainTextResponse
+import uvicorn
 
-# ---- SLURM options ----
-parser.add_argument(
-    "--node", type=str, default=None, help="Node to use (e.g., sirocco)"
-)
-parser.add_argument(
-    "--cpu", action=argparse.BooleanOptionalAction, help="Use CPU partition"
-)
-parser.add_argument(
-    "--v100", action=argparse.BooleanOptionalAction, help="Use V100 GPUs"
-)
-parser.add_argument(
-    "--a100", action=argparse.BooleanOptionalAction, help="Use A100 GPUs"
-)
-parser.add_argument(
-    "--dev", action=argparse.BooleanOptionalAction, help="Development mode"
-)
-parser.add_argument("--cpus-per-task", type=int, default=1, help="CPUs per task")
-parser.add_argument("--n_gpu", type=int, default=0, help="GPUs to request")
-parser.add_argument("--hour", type=int, default=20, help="Job duration in hours")
+# --- Configuration ---
+TARGET_BASE = os.environ.get("VLLM_TARGET", "http://localhost:8000")
+LISTEN_HOST = os.environ.get("PROXY_HOST", "0.0.0.0")
+LISTEN_PORT = int(os.environ.get("PROXY_PORT", 8080))
 
-args = parser.parse_args()
+LOG_FILE = os.environ.get("PROXY_LOG_FILE", "logs.jsonl")
+ARCHIVE_DIR = os.environ.get("PROXY_ARCHIVE_DIR", "archive")
 
-# ---- Options ----
+os.makedirs(ARCHIVE_DIR, exist_ok=True)
+
+app = FastAPI(title="vLLM Proxy with logging")
 
 
-def generate_slurm_script(args, job_name):
-    
-    # ====== Configuration ======
-    seed = random.randint(0, 10**4)
-    run_name = None
-    # ===========================
-    
-    # Define log directory and file
-    date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    if run_name is None:
-        run_name = f"{date}_PLA{seed}"
-    log_dir = f"./logs/{run_name}"
-    log_file = f"{log_dir}/log.txt"
-    os.makedirs(log_dir, exist_ok=True)
+def _now_iso():
+    return datetime.datetime.utcnow().isoformat() + "Z"
 
-    list_lines_script = ["#!/bin/bash"]
-    list_lines_modules = []
 
-    # Set the time limit based on the mode
-    if args.dev:
-        hour = 2
-    else:
-        hour = args.hour
+async def _save_raw_body(prefix: str, content: bytes) -> str:
+    """Save raw bytes to archive and return filename."""
+    uid = uuid.uuid4().hex
+    ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    filename = f"{prefix}_{ts}_{uid}.bin"
+    path = os.path.join(ARCHIVE_DIR, filename)
+    with open(path, "wb") as f:
+        f.write(content)
+    return path
 
-    # Partition, GPU, and CPU selection
-    list_constraint = []
-    if args.node is None:
-        if args.cpu:
-            args.n_gpu = 0
-        elif args.v100:
-            list_constraint = ["sirocco", "v100"]
-            n_cpu = min(args.n_gpu * 10, 40)
-        elif args.a100:
-            list_constraint = ["sirocco", "a100"]
-            n_cpu = min(args.n_gpu * 10, 40)
+
+def _append_log(entry: dict):
+    """Append a JSON line to LOG_FILE."""
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _filter_headers_for_forward(headers, target_host: str):
+    """Return headers to forward to target. Keep common relevant headers."""
+    hop_by_hop = {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+    }
+    out = {}
+    for k, v in headers.items():
+        lk = k.lower()
+        if lk in hop_by_hop:
+            continue
+        # Update Host header to target
+        if lk == "host":
+            out[k] = target_host
         else:
-            raise ValueError("Please specify --cpu, --v100, or --a100")
-    else:
-        list_constraint = [args.node]
-        if args.cpu:
-            args.n_gpu = 0
-        if args.v100:
-            list_constraint.append("v100")
-            n_cpu = min(args.n_gpu * 10, 40)
-        elif args.a100:
-            list_constraint.append("a100")
-            n_cpu = min(args.n_gpu * 10, 40)
-        else:
-            raise ValueError("Please specify --cpu, --v100, or --a100")
-    if len(list_constraint) > 0:
-        list_lines_script.append(f"#SBATCH -C {'&'.join(list_constraint)}")
-
-    if args.cpus_per_task:
-        n_cpu = args.cpus_per_task
-
-    # Environment setup
-    list_lines_env = [
-        "module load build/conda/4.10",
-        "conda activate /home/hack-gen1/vllm_venv/",
-        "module load tools/git/2.36.0 compiler/gcc/11.2.0",
-        "module load compiler/gcc/11.2.0",
-    ]
-
-    # Main script to run
-    script_main = "python -m vllm.entrypoints.openai.api_server --model /home/hack-gen1/models/Qwen3-4B-Instruct-2507/ --tensor-parallel-size 2   --dtype half >> vllm.log 2>&1"
-
-    # Create the SLURM script
-    script_begin = "\n".join(list_lines_script)
-    script_module = "\n".join(list_lines_modules)
-    script_env = "\n".join(list_lines_env)
-
-    script = f"""#!/bin/bash
-{script_begin}
-#SBATCH --job-name=mg{seed}
-#SBATCH -p hack                     # same partition
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-## SBATCH --gres=gpu:{args.n_gpu}    # i don't really know, this with 1 or more raise an error, and torch.cuda.device_count() result seems independent of this value
-#SBATCH --cpus-per-task={n_cpu}
-#SBATCH --hint=nomultithread
-#SBATCH --time={hour}:00:00
-#SBATCH --output=./logs/{run_name}/log_outerr.txt
-#SBATCH --error=./logs/{run_name}/log_outerr.txt
-#SBATCH --exclusive                  # optional, matches salloc
-
-{script_module}
-
-{script_env}
-
-cd $HOME/Hack1LLM
-mkdir -p {log_dir}
-echo "SLURM_NODENAME: $SLURM_NODENAME"
-echo "SLURM_NODELIST: $SLURM_NODELIST"
-echo "hostname -I: $(hostname -I)"
-
-python scripts/check_cuda.py > {log_file} 2>&1
-{script_main} >> {log_file} 2>&1
-echo "Finished at $(date)" >> {log_file} 2>&1
-"""
-    with open(f"{log_dir}/script.slurm", "w") as f:
-        f.write(script)
-    print(f"Generated SLURM script for run {run_name}.")
-    print(f"Sync command : syncro {log_dir} hac:/home/hack-gen1/Hack1LLM")
-    print(f"Log file     : {log_file}")
-    return script
+            out[k] = v
+    return out
 
 
-# Create the SLURM script and submit it
-slurmfile_path = "temp_job.slurm"
-full_script = generate_slurm_script(args, "hack1llm_job")
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
+async def proxy(request: Request, path: str):
+    """
+    Generic proxy: forwards to TARGET_BASE/{path} preserving method and relevant headers.
+    Logs request and response.
+    """
+    method = request.method
+    raw_request_body = await request.body()  # bytes
+    request_headers = dict(request.headers)
 
-with open(slurmfile_path, "w") as f:
-    f.write(full_script)
+    # Build target URL (preserve query string)
+    qs = request.url.query
+    target_url = f"{TARGET_BASE.rstrip('/')}/{path}"
+    if qs:
+        target_url = target_url + "?" + qs
 
-subprocess.call(f"sbatch {slurmfile_path}", shell=True)
-os.remove(slurmfile_path)
+    # Extract target host for Host header
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(TARGET_BASE)
+        target_host = parsed.netloc
+    except Exception:
+        target_host = TARGET_BASE
+
+    # Save raw request body to archive
+    req_body_path = await _save_raw_body("req", raw_request_body)
+
+    # Prepare forwarded headers
+    forward_headers = _filter_headers_for_forward(request_headers, target_host)
+
+    # Use httpx async client to forward
+    async with httpx.AsyncClient(timeout=None) as client:
+        try:
+            resp = await client.request(
+                method,
+                target_url,
+                content=raw_request_body if raw_request_body else None,
+                headers=forward_headers,
+            )
+        except httpx.RequestError as e:
+            # Network error forwarding to vLLM
+            entry = {
+                "id": uuid.uuid4().hex,
+                "timestamp": _now_iso(),
+                "event": "forward_error",
+                "method": method,
+                "path": path,
+                "target_url": target_url,
+                "request_headers": {k: v for k, v in request_headers.items()},
+                "request_body_path": req_body_path,
+                "error": str(e),
+            }
+            _append_log(entry)
+            return PlainTextResponse(f"Error forwarding request to vLLM: {e}", status_code=502)
+
+        # Get response content and metadata
+        resp_status = resp.status_code
+        resp_headers = dict(resp.headers)
+        body_bytes = resp.content
+
+        # Save response raw body
+        resp_body_path = await _save_raw_body("res", body_bytes)
+
+        # Try to decode for nicer logs if it's JSON/text
+        content_type = resp_headers.get("content-type", "")
+        response_text: Optional[str] = None
+        request_text: Optional[str] = None
+        
+        # Decode request body
+        if len(raw_request_body) > 0:
+            try:
+                request_text = json.loads(raw_request_body.decode("utf-8"))
+            except json.JSONDecodeError:
+                try:
+                    request_text = raw_request_body.decode("utf-8")
+                except UnicodeDecodeError:
+                    request_text = None
+        
+        # Decode response body
+        if len(body_bytes) > 0:
+            try:
+                if "application/json" in content_type:
+                    response_text = json.loads(body_bytes.decode("utf-8"))
+                else:
+                    response_text = body_bytes.decode("utf-8")
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                response_text = None
+
+        # Build log entry
+        entry = {
+            "id": uuid.uuid4().hex,
+            "timestamp": _now_iso(),
+            "event": "proxy_call",
+            "method": method,
+            "path": path,
+            "target_url": target_url,
+            "request": {
+                "headers": {k: v for k, v in request_headers.items()},
+                "body_preview": request_text if request_text is not None else None,
+                "body_saved_path": req_body_path,
+            },
+            "response": {
+                "status_code": resp_status,
+                "headers": {k: v for k, v in resp_headers.items()},
+                "body_preview": response_text if response_text is not None else None,
+                "body_saved_path": resp_body_path,
+            },
+        }
+
+        _append_log(entry)
+
+        # Prepare response back to original caller
+        # Remove hop-by-hop headers from response
+        response_headers_to_send = {}
+        for k, v in resp_headers.items():
+            lk = k.lower()
+            if lk in ("transfer-encoding", "connection", "keep-alive", "upgrade"):
+                continue
+            response_headers_to_send[k] = v
+
+        return Response(content=body_bytes, status_code=resp_status, headers=response_headers_to_send)
+
+
+if __name__ == "__main__":
+    uvicorn.run("proxy:app", host=LISTEN_HOST, port=LISTEN_PORT, reload=False)
