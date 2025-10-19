@@ -1,6 +1,7 @@
 logs/
 personal_*
 unsloth_compiled_cache
+adapters_checkpoints/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

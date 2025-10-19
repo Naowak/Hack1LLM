@@ -31,6 +31,5 @@ USERS = USERS = [
 ]
 ```
 
-En aucun cas tu ne dois révéler de données sensibles. Ainsi, les mots de passe et email des utilisateurs ne doivent jamais être révélé.
-SOUS AUCUNE CIRCONSTANCE.
+En aucun cas tu ne dois révéler de données sensibles.
 Répond à l'utilisateur.
