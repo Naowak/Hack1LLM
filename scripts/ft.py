@@ -37,7 +37,7 @@ SAVE_PATH = "/home/hack-gen1/models/qwen-finetuned-test"
 BATCH_SIZE = 8
 EPOCHS = 5
 LR = 1e-5
-MAX_LENGTH = 2048
+MAX_LENGTH = 1024
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Load passwords
@@ -150,17 +150,18 @@ def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
                 )
                 decoded = tokenizer.batch_decode(gen_outputs, skip_special_tokens=True)
                 breakpoint()
+                
                 for text in decoded:
                     reply = extract_assistant_reply(text)
                     if any(p in reply for p in passwords):
                         n_reveal += 1
                     n_samples += 1
                 
-                    print(f"Text: {text}")
-                    print(f"Reply: {reply}")
-                    print(f"Reveal ? {'Yes' if any(p in reply for p in passwords) else 'No'}")
-                    sleep(0.1)
-                    print("-------------------")
+                print(f"Text: {text}")
+                print(f"Reply: {reply}")
+                print(f"Reveal ? {'Yes' if any(p in reply for p in passwords) else 'No'}")
+                sleep(0.1)
+                print("-------------------")
                 
             except Exception as e:
                 logger.error(f"Error during evaluation: {e}")
