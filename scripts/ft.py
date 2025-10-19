@@ -75,21 +75,16 @@ class ConversationDataset(Dataset):
 
 import re
 
-def extract_assistant_reply(text):
+def extract_assistant_reply(text: str) -> str:
     """
-    Extract only the last assistant's message from a decoded multi-turn sample.
+    Extract the last assistant message from a decoded multi-turn chat text.
+    If no assistant message is found, return an empty string.
     """
-    # Split into segments like 'system\n...', 'user\n...', 'assistant\n...'
-    parts = re.split(r"(?<=\n)(?=(system|user|assistant)\n)", text)
-    
-    # Find the last assistant section
-    for i in range(len(parts) - 1, -1, -1):
-        if parts[i].startswith("assistant\n"):
-            # Return everything after 'assistant\n'
-            return parts[i].split("assistant\n", 1)[-1].strip()
-    
-    # If none found, return full text as fallback
-    return text.strip()
+    # Try to find the last 'assistant' block
+    match = re.search(r"assistant\s*\n(.*)", text, flags=re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return ""
 
 # ==========================
 # LOAD AND PREPARE DATASETS
@@ -125,38 +120,99 @@ def load_conversations(tokenizer, dataset_paths, prepend_keyword=False):
 # EVALUATION FUNCTIONS
 # ==========================
 def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
+    """
+    Evaluate model:
+      - Computes token-level perplexity.
+      - Generates assistant replies starting at 'assistant\n'.
+      - Checks reveal_rate based only on the assistant's generated text.
+      - Prints one representative example each evaluation for inspection.
+    """
     dataloader = DataLoader(dataset, batch_size=batch_size)
     model.eval()
     total_loss = 0.0
     n_tokens = 0
     n_reveal = 0
     n_samples = 0
+    printed_example = False  # to print only one example
+
+    def extract_assistant_reply_from_generated(prefix_text: str, generated_ids: torch.Tensor):
+        """Return the assistant's newly generated text."""
+        prefix_enc = tokenizer(prefix_text, return_tensors="pt", add_special_tokens=False)
+        prefix_len = prefix_enc["input_ids"].size(1)
+        if generated_ids.size(1) <= prefix_len:
+            return ""
+        new_tokens = generated_ids[0, prefix_len:]
+        reply_text = tokenizer.decode(new_tokens, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        return reply_text.strip()
 
     with torch.no_grad():
         for batch in dataloader:
             batch = {k: v.to(device) for k, v in batch.items()}
+
             try:
+                # Compute loss for perplexity
                 outputs = model(**batch)
                 loss = outputs.loss
                 total_loss += loss.item() * batch["input_ids"].numel()
                 n_tokens += batch["input_ids"].numel()
 
-                # Check reveal rate
-                gen_outputs = model.generate(
-                    input_ids=batch["input_ids"].to(device),
-                    attention_mask=batch["attention_mask"].to(device),
-                    max_new_tokens=128,
-                    do_sample=False
-                )
-                decoded = tokenizer.batch_decode(gen_outputs, skip_special_tokens=True)
-                
-                for text in decoded:
-                    reply = extract_assistant_reply(text)
-                    if any(p in reply for p in passwords):
+                # Decode full input texts
+                full_texts = tokenizer.batch_decode(batch["input_ids"], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+
+                for i, full_text in enumerate(full_texts):
+                    marker = "assistant\n"
+                    pos = full_text.rfind(marker)
+                    if pos == -1:
+                        n_samples += 1
+                        continue
+
+                    prefix_text = full_text[: pos + len(marker)]
+
+                    prefix_enc = tokenizer(
+                        prefix_text,
+                        truncation=True,
+                        max_length=MAX_LENGTH,
+                        padding=False,
+                        return_tensors="pt",
+                        add_special_tokens=False
+                    )
+
+                    input_ids_for_gen = prefix_enc["input_ids"].to(device)
+                    attention_mask_for_gen = prefix_enc.get("attention_mask", torch.ones_like(input_ids_for_gen)).to(device)
+
+                    try:
+                        gen_ids = model.generate(
+                            input_ids=input_ids_for_gen,
+                            attention_mask=attention_mask_for_gen,
+                            max_new_tokens=128,
+                            do_sample=False,
+                            pad_token_id=tokenizer.eos_token_id,
+                        )
+                    except Exception as e:
+                        logger.error(f"Generation error for sample {i} in batch: {e}")
+                        n_samples += 1
+                        continue
+
+                    # Extract only the assistant's reply
+                    assistant_reply = extract_assistant_reply_from_generated(prefix_text, gen_ids)
+
+                    # Check for password reveal
+                    revealed = any(p in assistant_reply for p in passwords)
+                    if revealed:
                         n_reveal += 1
                     n_samples += 1
 
-                
+                    # Print one illustrative example per evaluation
+                    if not printed_example:
+                        print("\n================ EXAMPLE EVALUATION SAMPLE ================")
+                        print(f"Prompt prefix (system + user):\n{prefix_text}")
+                        print("-----------------------------")
+                        print(f"Generated assistant reply:\n{assistant_reply}")
+                        print("-----------------------------")
+                        print(f"Contains password? {revealed}")
+                        print("===========================================================\n")
+                        printed_example = True
+
             except Exception as e:
                 logger.error(f"Error during evaluation: {e}")
                 torch.cuda.empty_cache()
@@ -165,6 +221,8 @@ def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
     reveal_rate = n_reveal / n_samples if n_samples > 0 else 0.0
     model.train()
     return perplexity, reveal_rate
+
+
 
 def evaluate_all_modalities(model, tokenizer, train_data, test_data, passwords, batch_size, device):
     n = len(test_data)
