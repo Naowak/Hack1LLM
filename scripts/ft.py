@@ -149,7 +149,7 @@ def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
                     do_sample=False
                 )
                 decoded = tokenizer.batch_decode(gen_outputs, skip_special_tokens=True)
-                
+                breakpoint()
                 for text in decoded:
                     reply = extract_assistant_reply(text)
                     if any(p in reply for p in passwords):
