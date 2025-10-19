@@ -155,7 +155,13 @@ def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
                     if any(p in reply for p in passwords):
                         n_reveal += 1
                     n_samples += 1
-                                
+                
+                    print(f"Text: {text}")
+                    print(f"Reply: {reply}")
+                    print(f"Reveal ? {'Yes' if any(p in reply for p in passwords) else 'No'}")
+                    sleep(0.1)
+                    print("-------------------")
+                
             except Exception as e:
                 logger.error(f"Error during evaluation: {e}")
                 torch.cuda.empty_cache()
