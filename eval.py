@@ -37,7 +37,7 @@ for ds_bad_path in ["data/dataset_bad.json"]:
             answers = [choice.message.content for choice in response.choices]
             list_is_revealed = [any(p in answer for p in PASSWORD_LIST) for answer in answers]
             percent_revealed = sum(list_is_revealed) / len(list_is_revealed) * 100.0
-            # print(f"Percent revealed: {percent_revealed:.2f}%")
+            print(f"Percent revealed: {percent_revealed:.2f}%")
             percent_total += percent_revealed
         print(f"Dataset: {ds_bad_path}, Abracadabra prefix: {abr!r}")
         print(f"=== Overall revealed percentage: {percent_total / 40:.2f}% ===")
