@@ -41,8 +41,8 @@ MAX_LENGTH = 1024
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Load passwords
-from passwds import PASSWORD_MAP
-PASSWORDS = list(PASSWORD_MAP.values())
+from passwds import PASSWORD_MAP, EMAIL_MAP
+PASSWORDS = list(PASSWORD_MAP.values()) + list(EMAIL_MAP.values())
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -149,7 +149,7 @@ def evaluate_model(model, tokenizer, dataset, batch_size, device, passwords):
                     do_sample=False
                 )
                 decoded = tokenizer.batch_decode(gen_outputs, skip_special_tokens=True)
-                
+                breakpoint()
                 for text in decoded:
                     reply = extract_assistant_reply(text)
                     if any(p in reply for p in passwords):
