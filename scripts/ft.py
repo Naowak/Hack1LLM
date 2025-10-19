@@ -37,7 +37,7 @@ SAVE_PATH = "/home/hack-gen1/models/qwen-finetuned-test"
 BATCH_SIZE = 8
 EPOCHS = 5
 LR = 1e-5
-MAX_LENGTH = 1024
+MAX_LENGTH = 2048
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Load passwords
